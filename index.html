@@ -291,6 +291,9 @@ table.flat tr.l2 td:first-child{padding-left:8px}
 :root{--s-trend:#7a5cc9} :root[data-theme="dark"]{--s-trend:#b39cf0}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--s-trend:#b39cf0}}
 table.cmp tr.sel td{background:var(--accent-soft)}
+.connbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0 0 14px;padding:14px 18px;border-radius:12px;background:color-mix(in srgb, var(--s-line) 18%, var(--panel, #fff));border:1px solid color-mix(in srgb, var(--s-line) 55%, transparent)}
+.connbar b{font-size:15px}.connbar .muted{font-size:12.5px;margin-top:2px}
+.connbar .btn.primary{background:var(--s-proy);color:#fff;border-color:var(--s-proy);font-weight:700;padding:9px 18px;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -302,16 +305,20 @@ table.cmp tr.sel td{background:var(--accent-soft)}
     </div>
     <div class="spacer"></div>
     <span class="status" id="status"></span>
-    <span class="muted" style="font-size:11px" title="Versión del archivo del dashboard">v. 02-10 13:30</span>
+    <span class="muted" style="font-size:11px" title="Versión del archivo del dashboard">v. 02-10 13:38</span>
     <button class="btn" id="btnFolder" title="Elegir la carpeta donde están las bases">📁 Elegir carpeta</button>
     <button class="btn primary" id="btnRefresh" title="Vuelve a leer los archivos de la carpeta">⟳ Actualizar</button>
     <button class="btn" id="btnTheme" title="Cambiar tema claro/oscuro">◐</button>
     <input type="file" id="fileInput" webkitdirectory multiple hidden>
   </div>
 
+  <div id="connBar" class="connbar" hidden>
+    <div><b id="connTitle">Conectar la carpeta del proyecto</b><div class="muted" id="connSub"></div></div>
+    <button class="btn primary" id="connBtn">Conectar carpeta</button>
+  </div>
   <div id="emptyState" class="panel empty">
-    <h2>Carga tus bases para ver el dashboard</h2>
-    <div>Presiona <b>Elegir carpeta</b> y selecciona la carpeta que contiene (puede ser en subcarpetas; se ignoran las que empiezan con "_"):</div>
+    <h2>Conecta la carpeta del proyecto (solo la primera vez)</h2>
+    <div>Presiona <b>Conectar carpeta</b> y elige <b>DASHBOARD GERENCIA LONGITUDINAL - CONCEPCION</b> (la misma donde está este index.html). Luego elige <b>Permitir en cada visita</b> si el navegador lo ofrece: desde ahí el dashboard se abre listo y se actualiza solo. La carpeta contiene (puede ser en subcarpetas; se ignoran las que empiezan con "_"):</div>
     <ol>
       <li><b>BASE VENTAS USADOS QUITER.xlsx</b> — ventas y notas de crédito</li>
       <li><b>HOMOLOGADOS.xlsx</b> — sucursales, tipos de venta y estados Llaima</li>
@@ -3109,6 +3116,7 @@ const CORE = (() => {
       model.files = Object.fromEntries(Object.entries(c).filter(([, f]) => f && !Array.isArray(f)).map(([k, f]) => [k, { name: f.name, mod: f.lastModified }]));
       MODEL = model;
       await idb.set('model', model);
+      if ($('connBar') && (WATCH || list.length)) $('connBar').hidden = true;
       setStatus(`Actualizado ${new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })} · ${((performance.now() - t0) / 1000).toFixed(1)} s`);
       initFilters(true);
       if (!expanded.size) { RESULT.tree.forEach(z => expanded.add(z.name)); renderTable(); }
@@ -5438,14 +5446,33 @@ const CORE = (() => {
       // expandir primer nivel por defecto
       initFilters(true);
       RESULT.tree.forEach(z => expanded.add(z.name)); renderTable();
-      setStatus(`Datos guardados del ${new Date(cached.builtAt).toLocaleString('es-CL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} · presiona <b>Actualizar</b>`);
+      setStatus(`Datos guardados del ${new Date(cached.builtAt).toLocaleString('es-CL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`);
     }
+    try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch { }
     const dir = await idb.get('dir');
-    if (dir && dir.queryPermission) {
+    const bar = (title, sub, btn) => { $('connTitle').textContent = title; $('connSub').innerHTML = sub; $('connBtn').textContent = btn; $('connBar').hidden = false; };
+    const connected = async d => { $('connBar').hidden = true; const fl = await filesFromHandle(d); await loadFromFiles(fl); watchDir(d, fl); if (!cacheOk) { RESULT.tree.forEach(z => expanded.add(z.name)); renderTable(); } };
+    if (!window.showDirectoryPicker) {
+      bar('Este navegador no puede leer carpetas solo', 'Ábrelo en <b>Chrome</b> o <b>Edge</b> para que se cargue automáticamente. Aquí puedes elegir la carpeta cada vez.', 'Elegir carpeta');
+      $('connBtn').onclick = () => $('fileInput').click();
+    } else if (dir && dir.queryPermission) {
       try {
-        if (await dir.queryPermission({ mode: 'read' }) === 'granted') { const fl = await filesFromHandle(dir); await loadFromFiles(fl); watchDir(dir, fl); if (!cacheOk) { RESULT.tree.forEach(z => expanded.add(z.name)); renderTable(); } }
-        else setStatus('<b>Presiona Actualizar</b> y permite el acceso a la carpeta (elige <b>Permitir en cada visita</b> si el navegador lo ofrece): desde ahí el dashboard se actualiza solo');
-      } catch { }
+        if (await dir.queryPermission({ mode: 'read' }) === 'granted') await connected(dir);
+        else {
+          // el navegador exige un clic para volver a leer la carpeta: cualquier clic en la página sirve
+          bar(`Leer la carpeta "${dir.name}"`, (cacheOk ? 'Mostrando los datos guardados. ' : '') + 'Haz clic en cualquier parte (o en el botón) y elige <b>Permitir en cada visita</b> para que no vuelva a preguntar.', 'Leer datos ahora');
+          const go = async ev => { document.removeEventListener('pointerdown', go, true); document.removeEventListener('keydown', go, true);
+            try { const p = await dir.requestPermission({ mode: 'read' }); if (p === 'granted') await connected(dir); else bar('Permiso no otorgado', 'Sin permiso el dashboard muestra los últimos datos guardados. Presiona el botón para intentarlo de nuevo.', 'Dar permiso'); }
+            catch (e) { console.warn(e); } };
+          document.addEventListener('pointerdown', go, true); document.addEventListener('keydown', go, true);
+          $('connBtn').onclick = () => { };
+        }
+      } catch (e) { console.warn(e); }
+    } else {
+      bar('Conecta la carpeta del proyecto (solo la primera vez)', 'Elige <b>DASHBOARD GERENCIA LONGITUDINAL - CONCEPCION</b>, la carpeta donde está este index.html. Después se abre listo y se actualiza solo.', 'Conectar carpeta');
+      $('connBtn').onclick = async () => { await pickFolder(); if (WATCH) $('connBar').hidden = true; };
+    }
+    {
       try { if (sessionStorage.getItem('dash-usados-reload')) { sessionStorage.removeItem('dash-usados-reload'); if (WATCH) setStatus('Dashboard recargado con la versión nueva · datos leídos de la carpeta'); } } catch { }
     }
     window.__expandTop = () => { RESULT.tree.forEach(z => expanded.add(z.name)); renderTable(); };
