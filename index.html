@@ -717,8 +717,14 @@ table.mtab .muted{color:var(--ink-3)}
           <div class="panel-h"><h2 id="amcCmpTitle">Comparación a la misma fecha</h2><span class="note" id="amcCmpNote"></span><div class="spacer" style="flex:1"></div>
             <div class="seg" id="amcCmpGran"><button data-g="mes" class="on">Mes</button><button data-g="tri">Trimestre</button></div>
             <div class="seg" id="amcCmpMode"><button data-g="aa" class="on">vs año anterior</button><button data-g="pp">vs período anterior</button></div></div>
+          <div style="padding:8px 14px 0;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+            <div class="seg" id="amcCmpDim"><button data-g="zona" class="on">Zonas Americar</button><button data-g="reg">Regiones CAVEM</button></div>
+            <div class="seg" id="amcCmpItem"></div>
+            <span class="muted" style="font-size:12px">Mercado CAVEM:</span>
+            <div class="seg" id="amcCmpQ" title="Clic para mostrar u ocultar las transferencias CAVEM"><button data-g="nat">Transferencias Chile</button><button data-g="mp">Transferencias región</button></div></div>
           <div class="legend" id="amcCmpLegend" style="padding:8px 14px 0"></div>
           <div class="chart-box"><div id="amcCmpChart"></div></div>
+          <div id="amcCmpQBox"></div>
           <div class="tbl-wrap"><table id="amcCmpTbl" class="stbl"></table></div>
         </div>
         <div class="panel">
@@ -3364,7 +3370,14 @@ const CORE = (() => {
     const rows = zones.map(z => ({ key: z, name: pretty(z), b2b: isB2B(z), d: build([z]), regs: z === zL ? Object.fromEntries(Object.entries(pres[z]).map(([y, rs]) => [y, rs.map(r => r === 'Bío Bío' ? 'Bío Bío (sólo Los Ángeles)' : r)])) : pres[z] }))
       .sort((a, b) => M.reduce((t, k) => t + b.d[k].uu - a.d[k].uu, 0));
     const natM = M.filter(k => NAT[k] != null);
+    // por región CAVEM (todas las zonas que venden en ella; con o sin B2B): share sobre el mercado de esa región y sobre Chile
+    const regAll = [...new Set(zones.flatMap(z => years.flatMap(y => pres[z][y] || [])))];
+    const regRows = zs => regAll.map(r => { const d = {};
+      for (const k of M) { const uu = zs.reduce((t, z) => t + ((Z[z][r] || {})[k] || 0), 0), nat = NAT[k] ?? null, mp = NAT[k] != null ? (MR[r] || {})[k] ?? null : null;
+        d[k] = { uu, nat, mp, sNac: nat ? uu / nat : null, sPres: mp ? uu / mp : null, regs: [r] }; }
+      return { key: 'R:' + r, name: r, d, tot: M.reduce((t, k) => t + d[k].uu, 0) }; }).sort((a, b) => b.tot - a.tot);
     return { hasData: true, M, natM, lastNat: natM[natM.length - 1] || null, rows,
+      regRows: { con: regRows(zones), sin: regRows(zones.filter(z => !isB2B(z))) },
       tot: { con: build(zones), sin: build(zones.filter(z => !isB2B(z))) },
       missing: Object.entries(missing).map(([r, s]) => ({ r, ks: [...s].sort((a, b) => a - b) })).sort((a, b) => a.r.localeCompare(b.r)) };
   }
@@ -5642,7 +5655,12 @@ const CORE = (() => {
     box.querySelectorAll('.hit').forEach(el => { el.onmousemove = ev => tipAt(ev, tipF(M[+el.dataset.i])); el.onmouseleave = tipOff; });
   }
   // ---- comparación a la misma fecha (hasta el último mes con CAVEM): por mes o trimestre, vs año anterior o vs período anterior ----
-  let amcCGran = 'mes', amcCMode = 'aa';
+  let amcCGran = 'mes', amcCMode = 'aa', amcCmpDim = 'zona', amcCmpKey = 'TOT';
+  $('amcCmpDim').onclick = e => { const b = e.target.closest('button'); if (!b) return; amcCmpDim = b.dataset.g; [...$('amcCmpDim').children].forEach(x => x.classList.toggle('on', x === b)); amcCmpKey = null; renderAmc(); };
+  $('amcCmpItem').onclick = e => { const b = e.target.closest('button'); if (!b) return; amcCmpKey = b.dataset.g; renderAmc(); };
+  // transferencias CAVEM (Chile / región) en un gráfico aparte bajo la comparación; cada botón lo muestra u oculta
+  const amcCmpQ = { nat: false, mp: false };
+  $('amcCmpQ').onclick = e => { const b = e.target.closest('button'); if (!b) return; amcCmpQ[b.dataset.g] = !amcCmpQ[b.dataset.g]; b.classList.toggle('on', amcCmpQ[b.dataset.g]); renderAmc(); };
   const segOn = (id, f) => { $(id).onclick = e => { const b = e.target.closest('button'); if (!b) return; f(b.dataset.g); [...$(id).children].forEach(x => x.classList.toggle('on', x === b)); renderAmc(); }; };
   segOn('amcCmpGran', g => { amcCGran = g; }); segOn('amcCmpMode', g => { amcCMode = g; });
   // suma de un conjunto de meses: UU, transferencias Chile y de regiones (null si falta alguno) y shares
@@ -5678,6 +5696,14 @@ const CORE = (() => {
       `<div class="r"><span>Variación UU</span><b class="num">${p.cur && p.cmp && p.cmp.uu ? fSignedPct(p.cur.uu / p.cmp.uu - 1) : '—'}</b></div>` +
       `<div class="r"><span>Share mercado total</span><b class="num">${fS(p.cur && p.cur.sNac)} vs ${fS(p.cmp && p.cmp.sNac)}</b></div>` +
       `<div class="r"><span>Share regiones con presencia</span><b class="num">${fS(p.cur && p.cur.sPres)} vs ${fS(p.cmp && p.cmp.sPres)}</b></div>`);
+    // transferencias CAVEM bajo la comparación (aparecen sólo con su botón activo)
+    const regTxt = ((D[Object.keys(D).map(Number).filter(x => Math.floor(x / 100) === yN).pop()] || {}).regs || []).join(', ');
+    $('amcCmpQBox').innerHTML = [['nat', 'Transferencias CAVEM · todo Chile', 'var(--s-line)'], ['mp', `Transferencias CAVEM · ${regTxt || 'regiones'}`, 'var(--s-meta)']].filter(([f]) => amcCmpQ[f])
+      .map(([f, t]) => `<div style="border-top:1px solid var(--line);margin-top:4px"><div class="panel-h" style="border:0;padding-bottom:0"><h2 style="font-size:13px">${esc(t)}</h2><span class="note">${amcCMode === 'aa' ? `${yN} (oscuro) vs ${yN - 1} (claro)` : 'actual (oscuro) vs período anterior (claro)'} · sobre cada par: variación</span></div><div class="chart-box"><div data-q="${f}"></div></div></div>`).join('');
+    for (const [f, , col] of [['nat', '', 'var(--s-line)'], ['mp', '', 'var(--s-meta)']]) { const box = $('amcCmpQBox').querySelector(`[data-q="${f}"]`); if (!box) continue;
+      const Q = P.map(p => ({ ...p, cur: p.cur && p.cur[f] != null ? { uu: p.cur[f] } : null, cmp: p.cmp && p.cmp[f] != null ? { uu: p.cmp[f] } : null }));
+      pairChart(box, Q, [], p => `<div class="h">Transferencias ${f === 'nat' ? 'Chile' : 'región'} · ${p.cn} vs ${p.cl}</div><div class="r"><span>${p.cn}</span><b class="num">${fInt(p.cur && p.cur.uu) || '—'}</b></div>` +
+        `<div class="r"><span>${p.cl}</span><b class="num">${fInt(p.cmp && p.cmp.uu) || '—'}</b></div><div class="r"><span>Variación</span><b class="num">${p.cur && p.cmp && p.cmp.uu ? fSignedPct(p.cur.uu / p.cmp.uu - 1) : '—'}</b></div>`, { H: 260, col }); }
     // tabla
     const dpp = (a, b) => a != null && b != null ? ppS(a - b) : '—';
     $('amcCmpTbl').innerHTML = `<thead><tr><th style="text-align:left">Período</th><th style="text-align:left">Comparado con</th><th>UU</th><th>UU comp.</th><th>Var. UU</th>` +
@@ -5688,11 +5714,12 @@ const CORE = (() => {
           `<td class="num">${fS(c.sNac)}</td><td class="num">${fS(o.sNac)}</td><td class="num">${dpp(c.sNac, o.sNac)}</td><td class="num">${fS(c.sPres)}</td><td class="num">${fS(o.sPres)}</td><td class="num">${dpp(c.sPres, o.sPres)}</td></tr>`; }).join('') + '</tbody>';
   }
   // barras pareadas (comparación clara, actual oscuro) + líneas de share actual (sólida) y comparación (punteada) en la franja superior
-  function pairChart(box, P, lines, tipF) {
+  // opt: { H: alto, col: color de barras } (sin líneas, las barras usan todo el alto)
+  function pairChart(box, P, lines, tipF, opt = {}) {
     if (!P.length) { box.innerHTML = '<div class="muted" style="padding:30px;text-align:center">Sin datos</div>'; return; }
-    const W = Math.max(box.clientWidth || 600, 300), H = 420, m = { t: 14, r: 58, b: 34, l: 48 }, iw = W - m.l - m.r, ih = H - m.t - m.b, base = m.t + ih;
+    const W = Math.max(box.clientWidth || 600, 300), H = opt.H || 420, m = { t: 14, r: 58, b: 34, l: 54 }, iw = W - m.l - m.r, ih = H - m.t - m.b, base = m.t + ih;
     const gw = iw / P.length, X = i => m.l + gw * i + gw / 2, bw = Math.max(14, Math.min(48, gw * 0.34));
-    const barTop = m.t + ih * 0.47, lineTop = m.t + 14, lineBot = barTop - 40;
+    const barTop = lines.length ? m.t + ih * 0.47 : m.t + 30, lineTop = m.t + 14, lineBot = barTop - 40, BC = opt.col || 'var(--s-proy)';
     const mb = Math.max(1, ...P.filter(p => !p.ytd).flatMap(p => [p.cur && p.cur.uu, p.cmp && p.cmp.uu]).filter(v => v != null)), y = v => base - v / mb * (base - barTop);   // el YTD tiene su propia escala
     const lv = P.flatMap(p => lines.flatMap(l => [p.cur && p.cur[l.f], p.cmp && p.cmp[l.f]])).filter(v => v != null && isFinite(v));
     let lo = lv.length ? Math.min(...lv) : 0, hi = lv.length ? Math.max(...lv) : 0.01; if (hi - lo < 0.002) { lo -= 0.001; hi += 0.001; }
@@ -5707,8 +5734,11 @@ const CORE = (() => {
     if (yi >= 0) s += `<line x1="${m.l + gw * yi}" x2="${m.l + gw * yi}" y1="${m.t}" y2="${base + 30}" stroke="var(--ink-3)" stroke-dasharray="3 3"/><rect x="${m.l + gw * yi}" y="${m.t}" width="${gw}" height="${ih}" fill="var(--accent-soft)" opacity=".45"/>`;
     P.forEach((p, i) => { const Y = p.ytd ? yY : y, cx = X(i), gap = 3;
       const bar = (v, x, light) => { if (v == null) return ''; const top = Y(v), hg = base - top;
-        let r = `<rect x="${x}" y="${top}" width="${bw}" height="${hg}" fill="var(--s-proy)" ${light ? 'opacity=".35"' : ''} rx="2"/>`;
-        const fs = bw < 30 ? 9.5 : 11;
+        let r = `<rect x="${x}" y="${top}" width="${bw}" height="${hg}" fill="${BC}" ${light ? 'opacity=".35"' : ''} rx="2"/>`;
+        const fs = bw < 30 ? 9 : bw < 40 && v >= 10000 ? 9.5 : 11;   // números grandes (transferencias) en letra más chica para que quepan
+        const txt = fInt(v), tw = txt.length * fs * 0.6;
+        // si el número no cabe a lo ancho pero la barra es alta, va vertical dentro de la barra
+        if (tw > bw - 4 && hg >= tw + 10) return r + `<text transform="translate(${x + bw / 2 - fs * 0.4},${top + 6}) rotate(90)" font-size="${fs + 1}" font-weight="700" fill="${light ? 'var(--ink)' : '#fff'}">${txt}</text>`;
         r += hg >= 22 ? `<text x="${x + bw / 2}" y="${top + 14}" text-anchor="middle" font-size="${fs}" font-weight="700" fill="${light ? 'var(--ink)' : '#fff'}">${fInt(v)}</text>`
           : `<text x="${x + bw / 2}" y="${top - 4}" text-anchor="middle" font-size="${fs}" font-weight="700" fill="var(--ink)" ${halo}>${fInt(v)}</text>`;
         return r; };
@@ -5789,7 +5819,13 @@ const CORE = (() => {
       (amcShow.pres ? `<span>${ln('var(--s-meta)', 2.5, '5 3')}Share regiones con presencia${trTxt('var(--s-meta)')}</span>` : '') +
       (amcShow.nac || amcShow.pres ? `<span>${ln('var(--ink-2)', 1.5, '2 3')}Tendencia lineal del share (del color de cada línea)</span>` : '');
     renderAmcZ2(rows, T, E, k, yN);
-    renderAmcCmp(D, nm, yN, nMax);
+    // comparación: su propio segmentador (zona Americar o región CAVEM)
+    { const items = amcCmpDim === 'zona' ? [{ key: 'TOT', name: `Total Americar ${lbl}`, d: T }, ...rows]
+        : [{ key: 'R:TOT', name: 'Total regiones con presencia', d: T }, ...A.regRows[amcB2B].map(r => ({ ...r, name: r.name }))];
+      if (!items.some(x => x.key === amcCmpKey)) amcCmpKey = items[0].key;
+      $('amcCmpItem').innerHTML = items.map(x => `<button data-g="${esc(x.key)}" class="${x.key === amcCmpKey ? 'on' : ''}">${esc(x.key === 'TOT' ? 'Total Americar' : x.name)}</button>`).join('');
+      const it = items.find(x => x.key === amcCmpKey);
+      renderAmcCmp(it.d, it.name + (amcCmpDim === 'reg' && it.key !== 'R:TOT' ? ' (región CAVEM)' : ''), yN, nMax); }
     // evolutivo del share por zona
     const serAll = rows.map((r, i) => ({ k: r.key, name: r.name, col: AMC_COL[i % AMC_COL.length], get: e => r.d[e.ym] ? r.d[e.ym].sPres : null }));
     serAll.push({ k: 'TOT', name: `Total Americar ${lbl}`, col: 'var(--ink-2)', dash: true, get: e => T[e.ym] ? T[e.ym].sPres : null });
