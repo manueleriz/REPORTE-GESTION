@@ -707,6 +707,13 @@ table.mtab .muted{color:var(--ink-3)}
           <div class="chart-box"><div id="amcChart1"></div></div>
         </div>
         <div class="panel">
+          <div class="panel-h"><h2>Zonas sobre el mercado Americar</h2><span class="note" id="amcZ2Note"></span><div class="spacer" style="flex:1"></div>
+            <div class="seg" id="amcZ2Base"><button data-g="nac" class="on">Mercado total</button><button data-g="pres">Regiones con presencia Americar</button></div></div>
+          <div style="padding:8px 14px 0;display:flex;gap:10px;flex-wrap:wrap;align-items:center"><span class="muted" style="font-size:12px">Zonas (clic para sumar o quitar, puedes elegir varias):</span><div class="seg" id="amcZ2Sel"></div></div>
+          <div class="legend" id="amcZ2Legend" style="padding:8px 14px 0"></div>
+          <div class="chart-box"><div id="amcZ2Chart"></div></div>
+        </div>
+        <div class="panel">
           <div class="panel-h"><h2 id="amcCmpTitle">Comparación a la misma fecha</h2><span class="note" id="amcCmpNote"></span><div class="spacer" style="flex:1"></div>
             <div class="seg" id="amcCmpGran"><button data-g="mes" class="on">Mes</button><button data-g="tri">Trimestre</button></div>
             <div class="seg" id="amcCmpMode"><button data-g="aa" class="on">vs año anterior</button><button data-g="pp">vs período anterior</button></div></div>
@@ -715,7 +722,9 @@ table.mtab .muted{color:var(--ink-3)}
           <div class="tbl-wrap"><table id="amcCmpTbl" class="stbl"></table></div>
         </div>
         <div class="panel">
-          <div class="panel-h"><h2>Evolutivo del share por zona</h2><span class="note">UU de la zona ÷ transferencias de las regiones donde vende · línea punteada = Total Americar sobre regiones con presencia</span></div>
+          <div class="panel-h"><h2>Evolutivo del share por zona</h2><span class="note">UU de la zona ÷ transferencias de las regiones donde vende</span><div class="spacer" style="flex:1"></div>
+            <div class="seg" id="amcZType"><button data-g="bar" class="on">Barras</button><button data-g="line">Líneas</button></div></div>
+          <div style="padding:8px 14px 0;display:flex;gap:10px;flex-wrap:wrap;align-items:center"><span class="muted" style="font-size:12px">Zonas (clic para mostrar u ocultar):</span><div class="seg" id="amcZSel"></div></div>
           <div class="legend" id="amcLegend2" style="padding:8px 14px 0"></div>
           <div class="chart-box"><div id="amcChart2"></div></div>
         </div>
@@ -1081,12 +1090,17 @@ const CORE = (() => {
   'use strict';
 
   // ---------- Configuración ----------
-  const MODEL_VERSION = 41;   // subir cuando cambie la estructura de datos: invalida la caché del navegador
+  const MODEL_VERSION = 42;   // subir cuando cambie la estructura de datos: invalida la caché del navegador
   // Región de Chile normalizada (acepta "VII - MAULE", "RM - REGIÓN METROPOLITANA", "Bío-Bío", "XVI Ñuble"...); GENERICO u otros → null
   const REG_CANON = [['arica', 'Arica y Parinacota'], ['tarapaca', 'Tarapacá'], ['antofagasta', 'Antofagasta'], ['atacama', 'Atacama'], ['coquimbo', 'Coquimbo'],
     ['valparaiso', 'Valparaíso'], ['metropolitana', 'Metropolitana'], ['higgins', "O'Higgins"], ['maule', 'Maule'], ['nuble', 'Ñuble'], ['bio', 'Bío Bío'],
     ['araucania', 'Araucanía'], ['los rios', 'Los Ríos'], ['los lagos', 'Los Lagos'], ['aysen', 'Aysén'], ['magallanes', 'Magallanes']];
   function regCanon(s) { const n = norm(String(s || '')); for (const [k, v] of REG_CANON) if (n.includes(k)) return v; return null; }
+  // región por la ciudad del concesionario (para ventas con región GENERICO)
+  const CITY_REG = [[/valdivia|las animas/, 'Los Ríos'], [/temuco/, 'Araucanía'], [/puerto montt|osorno|castro/, 'Los Lagos'], [/chillan/, 'Ñuble'],
+    [/talca|linares|curico/, 'Maule'], [/los angeles|concepcion|vega|clinica|paicavi|colon/, 'Bío Bío'], [/serena/, 'Coquimbo'], [/vina|san felipe/, 'Valparaíso'],
+    [/rancagua/, "O'Higgins"]];
+  function cityReg(n) { for (const [re, v] of CITY_REG) if (re.test(n)) return v; return /reina|vitacura|condes|movicenter|cerrillos|maipu|florida|dehesa|bilbao/.test(n) ? 'Metropolitana' : null; }
   const CFG = {
     campoFechaVenta: 'Fecha F.',          // fecha de factura / NC en Quiter
     diasHabiles: [1, 2, 3, 4, 5, 6],      // 0=Dom ... 6=Sáb  (lunes a sábado)
@@ -2021,7 +2035,13 @@ const CORE = (() => {
           const ref = String(getCol(r, 'Referencia') || '').trim(); if (!ref) continue;
           if (norm(getCol(r, 'Negocio') || '') === 'usados') {   // venta usados Americar nacional (para el share nacional de usados)
             const ff = toYMD(getCol(r, 'Fecha Fact.')), st = String(getCol(r, 'Estado') || '').trim().toUpperCase();
-            byRefU.set(ref, { ym: ff ? ff.y * 100 + ff.m : null, ok: st === 'CERRADA' && !!ff, uu: num(getCol(r, 'UU')) || 0, zona: String(getCol(r, 'Zona') || '').trim(), reg: regCanon(getCol(r, 'Región')) });
+            // correcciones de la base (definición de Manuel, 08-10): los locales de Valdivia van a Temuco - Valdivia / Los Ríos aunque vengan en otra zona;
+            // región GENERICO → se deduce de la ciudad del concesionario
+            let zona = String(getCol(r, 'Zona') || '').trim(), reg = regCanon(getCol(r, 'Región'));
+            const cnU = norm(getCol(r, 'Concesionario') || '');
+            if (/valdivia|las animas/.test(cnU)) { zona = 'ZONA TEMUCO - VALDIVIA'; reg = 'Los Ríos'; }
+            if (!reg) reg = cityReg(cnU);
+            byRefU.set(ref, { ym: ff ? ff.y * 100 + ff.m : null, ok: st === 'CERRADA' && !!ff, uu: num(getCol(r, 'UU')) || 0, zona, reg });
             continue;
           }
           const con = String(getCol(r, 'Concesionario') || '').trim(), rg0 = String(getCol(r, 'Región') || '').trim(), cn = norm(con);
@@ -3328,13 +3348,20 @@ const CORE = (() => {
     for (const z of zones) { pres[z] = {}; for (const y of years) pres[z][y] = Object.keys(Z[z]).filter(r => r !== 'Sin región' &&
       Object.entries(Z[z][r]).reduce((t, [k, v]) => t + (Math.floor(+k / 100) === y ? v : 0), 0) >= AMC_MIN).sort(); }
     const missing = {};
-    const mkt = (regs, k) => { let t = 0, ok = true; for (const r of regs) { const v = (MR[r] || {})[k]; if (v == null) { ok = false; (missing[r] || (missing[r] = new Set())).add(k); } else t += v; } return ok && regs.length ? t : null; };
+    // Longitudinal en Bío Bío = sólo Los Ángeles (mismo criterio que la vista Share mercado): Bío Bío × participación de Los Ángeles
+    // en la venta Americar del Bío Bío (Longitudinal + Concepción) del mes. Concepción y el Total usan Bío Bío completo.
+    const zL = zones.find(z => /longitudinal/i.test(z)), zC = zones.find(z => /concep/i.test(z));
+    const bbUU = (z, k) => z && Z[z]['Bío Bío'] ? Z[z]['Bío Bío'][k] || 0 : 0;
+    const partLA = k => { const a = bbUU(zL, k), b = a + bbUU(zC, k); return b ? a / b : null; };
+    const mkt = (regs, k, z) => { let t = 0, ok = true; for (const r of regs) { let v = (MR[r] || {})[k];
+        if (v != null && z && z === zL && r === 'Bío Bío') { const p = partLA(k); v = p == null ? null : v * p; }
+        if (v == null) { ok = false; (missing[r] || (missing[r] = new Set())).add(k); } else t += v; } return ok && regs.length ? t : null; };
     const build = zs => { const out = {}; for (const k of M) { const y = Math.floor(k / 100), regs = [...new Set(zs.flatMap(z => pres[z][y] || []))].sort();
-      const uu = zs.reduce((t, z) => t + uuZ(z, k), 0), mp = NAT[k] != null ? mkt(regs, k) : null, nat = NAT[k] ?? null;
+      const uu = zs.reduce((t, z) => t + uuZ(z, k), 0), mp = NAT[k] != null ? mkt(regs, k, zs.length === 1 ? zs[0] : null) : null, nat = NAT[k] ?? null;
       out[k] = { uu, nat, sNac: nat ? uu / nat : null, mp, sPres: mp ? uu / mp : null, regs }; } return out; };
     const isB2B = z => /b2b/i.test(z);
     const pretty = z => isB2B(z) ? 'B2B' : z.replace(/^zona\s+/i, '').toLowerCase().replace(/(^|[\s-])\S/g, c => c.toUpperCase()).replace('Concepcion', 'Concepción').replace('Region', 'Región');
-    const rows = zones.map(z => ({ key: z, name: pretty(z), b2b: isB2B(z), d: build([z]), regs: pres[z] }))
+    const rows = zones.map(z => ({ key: z, name: pretty(z), b2b: isB2B(z), d: build([z]), regs: z === zL ? Object.fromEntries(Object.entries(pres[z]).map(([y, rs]) => [y, rs.map(r => r === 'Bío Bío' ? 'Bío Bío (sólo Los Ángeles)' : r)])) : pres[z] }))
       .sort((a, b) => M.reduce((t, k) => t + b.d[k].uu - a.d[k].uu, 0));
     const natM = M.filter(k => NAT[k] != null);
     return { hasData: true, M, natM, lastNat: natM[natM.length - 1] || null, rows,
@@ -5522,6 +5549,98 @@ const CORE = (() => {
   const AMC_COL = ['var(--s-meta)', 'var(--s-evo-meta)', 'var(--s-line)', 'var(--ag-7)', 'var(--fi-2)', 'var(--good)', 'var(--ag-6)', 'var(--s-avg)'];
   $('amcB2B').onclick = e => { const b = e.target.closest('button'); if (!b) return; amcB2B = b.dataset.g; [...$('amcB2B').children].forEach(x => x.classList.toggle('on', x === b)); renderAmc(); renderAlerts(); };
   $('amcSel').onclick = e => { const b = e.target.closest('button'); if (!b) return; amcSel = b.dataset.g; renderAmc(); };
+  // ---- zonas sobre el mercado Americar: share de cada zona sobre la MISMA base del total (mercado Chile o regiones con presencia Americar) ----
+  // así los shares de las zonas suman el share Americar y se comparan entre sí
+  let amcZ2On = null, amcZ2Base = 'nac';
+  $('amcZ2Base').onclick = e => { const b = e.target.closest('button'); if (!b) return; amcZ2Base = b.dataset.g; [...$('amcZ2Base').children].forEach(x => x.classList.toggle('on', x === b)); renderAmc(); };
+  $('amcZ2Sel').onclick = e => { const b = e.target.closest('button'); if (!b) return; const g = b.dataset.g;
+    if (g === '__all') amcZ2On = null; else if (g === '__none') amcZ2On = new Set(); else { amcZ2On.has(g) ? amcZ2On.delete(g) : amcZ2On.add(g); }
+    renderAmc(); };
+  function renderAmcZ2(rows, T, E, k, yN) {
+    if (!amcZ2On) amcZ2On = new Set(rows.map(r => r.key));
+    const den = ym => { const t = T[ym]; return !t ? null : amcZ2Base === 'nac' ? t.nat : t.mp; };
+    const all = rows.map((r, i) => ({ k: r.key, name: r.name, col: AMC_COL[i % AMC_COL.length], uu: e => r.d[e.ym] ? r.d[e.ym].uu : 0,
+      s: e => { const d = den(e.ym), u = r.d[e.ym] ? r.d[e.ym].uu : null; return d && u != null ? u / d : null; } }));
+    $('amcZ2Sel').innerHTML = `<button data-g="__all">Todas</button><button data-g="__none">Ninguna</button>` + all.map(z => `<button data-g="${esc(z.k)}" class="${amcZ2On.has(z.k) ? 'on' : ''}"><i style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;background:${z.col}"></i>${esc(z.name)}</button>`).join('');
+    const Z = all.filter(z => amcZ2On.has(z.k));
+    const baseTxt = amcZ2Base === 'nac' ? 'transferencias de todo Chile' : `transferencias de las regiones con presencia Americar (${(T[k] || {}).regs ? T[k].regs.join(', ') : '—'})`;
+    $('amcZ2Note').textContent = `UU de cada zona ÷ ${baseTxt}`;
+    const sumS = e => { const d = den(e.ym); return d ? Z.reduce((t, z) => t + z.uu(e), 0) / d : null; };
+    $('amcZ2Legend').innerHTML = Z.map(z => `<span><i style="background:${z.col}"></i>${esc(z.name)}</span>`).join('') +
+      (Z.length > 1 ? `<span><svg width="22" height="12"><line x1="0" y1="6" x2="22" y2="6" stroke="var(--ink-2)" stroke-width="2.5" stroke-dasharray="5 3"/></svg>Suma de las zonas elegidas</span>` : '') +
+      `<span class="muted">Barras: UU apiladas por zona · líneas: share de cada zona (eje derecho)</span>`;
+    if (!Z.length) { $('amcZ2Chart').innerHTML = '<div class="muted" style="padding:30px;text-align:center">Elige al menos una zona</div>'; return; }
+    stackLines($('amcZ2Chart'), E, Z, Z.length > 1 ? sumS : null, e => `<div class="h">${MESES[e.m - 1]} ${e.y} · sobre ${amcZ2Base === 'nac' ? 'mercado total' : 'regiones con presencia'}</div>` +
+      Z.map(z => `<div class="r"><span><i style="background:${z.col}"></i>${esc(z.name)}</span><b class="num">${fInt(z.uu(e))} UU · ${fS(z.s(e))}</b></div>`).join('') +
+      (Z.length > 1 ? `<div class="r"><span>Suma elegidas</span><b class="num">${fInt(Z.reduce((t, z) => t + z.uu(e), 0))} UU · ${fS(sumS(e))}</b></div>` : '') +
+      `<div class="r"><span>Base (transferencias)</span><b class="num">${fInt(den(e.ym)) || 'falta dato'}</b></div>`, k);
+  }
+  // barras apiladas (UU por zona, franja inferior) + líneas de share por zona y suma (franja superior); etiquetas sin superponerse
+  function stackLines(box, M, Z, sumF, tipF, hiYM) {
+    const W = Math.max(box.clientWidth || 600, 300), H = 480, m = { t: 14, r: 58, b: 34, l: 48 }, iw = W - m.l - m.r, ih = H - m.t - m.b, base = m.t + ih;
+    const gw = iw / M.length, X = i => m.l + gw * i + gw / 2, bw = Math.max(18, Math.min(60, gw * 0.6));
+    const barTop = m.t + ih * 0.5, lineTop = m.t + 14, lineBot = barTop - 36;
+    const tot = e => Z.reduce((t, z) => t + z.uu(e), 0), mb = Math.max(1, ...M.map(tot)), y = v => base - v / mb * (base - barTop - 16);
+    const ser = [...Z.map(z => ({ get: z.s, col: z.col })), ...(sumF ? [{ get: sumF, col: 'var(--ink-2)', dash: true }] : [])];
+    const lv = M.flatMap(e => ser.map(s => s.get(e))).filter(v => v != null && isFinite(v));
+    let lo = lv.length ? Math.min(...lv) : 0, hi = lv.length ? Math.max(...lv) : 0.01; if (hi - lo < 0.002) { lo -= 0.001; hi += 0.001; }
+    const pd = (hi - lo) * 0.1; lo = Math.max(0, lo - pd); hi += pd;
+    const yL = v => lineBot - (v - lo) / (hi - lo) * (lineBot - lineTop);
+    const halo = 'paint-order="stroke" stroke="var(--surface)" stroke-width="3.5" stroke-linejoin="round"';
+    let s = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img">`;
+    for (const t of niceTicks(mb)) if (y(t) >= barTop) s += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(t)}" y2="${y(t)}" stroke="var(--line)" ${t ? 'stroke-dasharray="2 4"' : ''}/><text x="${m.l - 6}" y="${y(t) + 4}" text-anchor="end" font-size="11" fill="var(--ink-3)">${fInt(t)}</text>`;
+    for (const t of niceTicks(hi, 6)) if (t >= lo && t <= hi) s += `<line x1="${m.l}" x2="${W - m.r}" y1="${yL(t)}" y2="${yL(t)}" stroke="var(--line)" stroke-dasharray="1 5" opacity=".7"/><text x="${W - m.r + 6}" y="${yL(t) + 4}" font-size="11" fill="var(--ink-3)">${nf1.format(t * 100)}%</text>`;
+    s += `<text x="${m.l - 6}" y="${barTop - 4}" text-anchor="end" font-size="10" fill="var(--ink-3)">UU</text><text x="${W - m.r + 6}" y="${lineTop - 4}" font-size="10" fill="var(--ink-3)">share</text>`;
+    M.forEach((e, i) => { if (e.ym === hiYM) s += `<rect x="${m.l + gw * i}" y="${m.t}" width="${gw}" height="${ih}" fill="var(--accent-soft)" opacity=".45"/>`;
+      let acc = 0; const x = X(i) - bw / 2;
+      Z.forEach(z => { const v = z.uu(e) || 0; if (!v) return; const y0 = y(acc), y1 = y(acc + v); acc += v;
+        s += `<rect x="${x}" y="${y1}" width="${bw}" height="${y0 - y1}" fill="${z.col}" stroke="var(--surface)" stroke-width="1"/>`;
+        if (y0 - y1 >= 14 && bw >= 26) s += `<text x="${X(i)}" y="${(y0 + y1) / 2 + 4}" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">${fInt(v)}</text>`; });
+      if (acc) s += `<text x="${X(i)}" y="${y(acc) - 5}" text-anchor="middle" font-size="11" font-weight="800" fill="var(--ink)" ${halo}>${fInt(acc)}</text>`;
+      s += `<text x="${X(i)}" y="${base + 14}" text-anchor="middle" font-size="11" fill="var(--ink)">${MES3[e.m - 1]}</text>`; if (i === 0 || e.m === 1) s += `<text x="${X(i)}" y="${base + 27}" text-anchor="middle" font-size="10.5" fill="var(--ink-3)">${e.y}</text>`; });
+    const labs = M.map(() => []);
+    for (const l of ser) { const pts = M.map((e, i) => [i, l.get(e)]).filter(p => p[1] != null && isFinite(p[1]));
+      const P = pts.map(p => [X(p[0]), yL(p[1])]);
+      if (P.length > 1) s += `<path d="${smoothPath(P)}" fill="none" stroke="${l.col}" stroke-width="2.5" ${l.dash ? 'stroke-dasharray="6 4"' : ''}/>`;
+      pts.forEach(p => { s += `<circle cx="${X(p[0])}" cy="${yL(p[1])}" r="3.5" fill="${l.col}"/>`; labs[p[0]].push({ yy: yL(p[1]), v: p[1], col: l.col }); }); }
+    // por mes: etiquetas ordenadas y separadas ≥ 13 px, a la derecha del punto (a la izquierda en el último mes)
+    labs.forEach((arr, i) => { if (!arr.length) return; arr.sort((a, b) => a.yy - b.yy);
+      const pos = arr.map(o => o.yy + 4); for (let j = 1; j < pos.length; j++) pos[j] = Math.max(pos[j], pos[j - 1] + 13);
+      const over = pos[pos.length - 1] - (lineBot + 22); if (over > 0) for (let j = 0; j < pos.length; j++) pos[j] -= over;
+      const last = i === M.length - 1, xx = last ? X(i) - 7 : X(i) + 7;
+      arr.forEach((o, j) => { s += `<text x="${xx}" y="${pos[j]}" ${last ? 'text-anchor="end"' : ''} font-size="10.5" font-weight="700" fill="${o.col}" ${halo}>${nf2.format(o.v * 100)}%</text>`; }); });
+    M.forEach((e, i) => { s += `<rect x="${m.l + gw * i}" y="${m.t}" width="${gw}" height="${ih}" fill="transparent" class="hit" data-i="${i}"/>`; });
+    box.innerHTML = s + '</svg>';
+    box.querySelectorAll('.hit').forEach(el => { el.onmousemove = ev => tipAt(ev, tipF(M[+el.dataset.i])); el.onmouseleave = tipOff; });
+  }
+  // ---- share por zona: segmentador de zonas y tipo de gráfico ----
+  let amcZOn = null, amcZType = 'bar';
+  $('amcZType').onclick = e => { const b = e.target.closest('button'); if (!b) return; amcZType = b.dataset.g; [...$('amcZType').children].forEach(x => x.classList.toggle('on', x === b)); renderAmc(); };
+  $('amcZSel').onclick = e => { const b = e.target.closest('button'); if (!b) return; const g = b.dataset.g;
+    if (g === '__all') amcZOn = null; else if (g === '__none') amcZOn = new Set(); else { amcZOn.has(g) ? amcZOn.delete(g) : amcZOn.add(g); }
+    renderAmc(); };
+  // barras agrupadas por mes (una por zona), con el valor sobre cada barra (vertical si la barra es angosta)
+  function groupBars(box, M, series, tipF, hiYM) {
+    const W = Math.max(box.clientWidth || 600, 300), n = series.length, H = 400, m = { t: 22, r: 14, b: 34, l: 48 }, iw = W - m.l - m.r, ih = H - m.t - m.b, base = m.t + ih;
+    const gw = iw / M.length, inner = gw * 0.86, bw = Math.max(4, Math.min(44, inner / n - 2)), X = i => m.l + gw * i + gw / 2;
+    const all = M.flatMap(e => series.map(s => s.get(e))).filter(v => v != null && isFinite(v)), mx = Math.max(0.001, ...all);
+    const vert = bw < 30, room = vert ? 44 : 18;   // espacio para la etiqueta sobre la barra más alta
+    const y = v => base - v / mx * (ih - room);
+    const halo = 'paint-order="stroke" stroke="var(--surface)" stroke-width="3" stroke-linejoin="round"';
+    let s = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img">`;
+    for (const t of niceTicks(mx)) s += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(t)}" y2="${y(t)}" stroke="var(--line)" ${t ? 'stroke-dasharray="2 4"' : ''}/><text x="${m.l - 6}" y="${y(t) + 4}" text-anchor="end" font-size="11" fill="var(--ink-3)">${nf1.format(t * 100)}%</text>`;
+    M.forEach((e, i) => { if (e.ym === hiYM) s += `<rect x="${m.l + gw * i}" y="${m.t}" width="${gw}" height="${ih}" fill="var(--accent-soft)" opacity=".45"/>`;
+      const x0 = X(i) - (n * (bw + 2) - 2) / 2;
+      series.forEach((se, j) => { const v = se.get(e); if (v == null || !isFinite(v)) return; const x = x0 + j * (bw + 2), top = y(v);
+        s += `<rect x="${x}" y="${top}" width="${bw}" height="${base - top}" fill="${se.col}" rx="1.5" ${se.dash ? 'opacity=".75"' : ''}/>`;
+        const txt = nf2.format(v * 100) + '%', cx = x + bw / 2;
+        s += vert ? `<text transform="translate(${cx + 3.5},${top - 4}) rotate(-90)" font-size="10" font-weight="700" fill="${se.col}" ${halo}>${txt}</text>`
+          : `<text x="${cx}" y="${top - 5}" text-anchor="middle" font-size="10.5" font-weight="700" fill="${se.col}" ${halo}>${txt}</text>`; });
+      s += `<text x="${X(i)}" y="${base + 14}" text-anchor="middle" font-size="11" fill="var(--ink)">${MES3[e.m - 1]}</text>`; if (i === 0 || e.m === 1) s += `<text x="${X(i)}" y="${base + 27}" text-anchor="middle" font-size="10.5" fill="var(--ink-3)">${e.y}</text>`; });
+    M.forEach((e, i) => { s += `<rect x="${m.l + gw * i}" y="${m.t}" width="${gw}" height="${ih}" fill="transparent" class="hit" data-i="${i}"/>`; });
+    box.innerHTML = s + '</svg>';
+    box.querySelectorAll('.hit').forEach(el => { el.onmousemove = ev => tipAt(ev, tipF(M[+el.dataset.i])); el.onmouseleave = tipOff; });
+  }
   // ---- comparación a la misma fecha (hasta el último mes con CAVEM): por mes o trimestre, vs año anterior o vs período anterior ----
   let amcCGran = 'mes', amcCMode = 'aa';
   const segOn = (id, f) => { $(id).onclick = e => { const b = e.target.closest('button'); if (!b) return; f(b.dataset.g); [...$(id).children].forEach(x => x.classList.toggle('on', x === b)); renderAmc(); }; };
@@ -5669,12 +5788,21 @@ const CORE = (() => {
       (amcShow.nac ? `<span>${ln('var(--s-line)', 2.5)}Share mercado total${trTxt('var(--s-line)')}</span>` : '') +
       (amcShow.pres ? `<span>${ln('var(--s-meta)', 2.5, '5 3')}Share regiones con presencia${trTxt('var(--s-meta)')}</span>` : '') +
       (amcShow.nac || amcShow.pres ? `<span>${ln('var(--ink-2)', 1.5, '2 3')}Tendencia lineal del share (del color de cada línea)</span>` : '');
+    renderAmcZ2(rows, T, E, k, yN);
     renderAmcCmp(D, nm, yN, nMax);
     // evolutivo del share por zona
-    const ser = rows.map((r, i) => ({ k: r.key, name: r.name, col: AMC_COL[i % AMC_COL.length], get: e => r.d[e.ym] ? r.d[e.ym].sPres : null }));
-    ser.push({ k: 'TOT', name: `Total Americar ${lbl}`, col: 'var(--ink-2)', dash: true, get: e => T[e.ym] ? T[e.ym].sPres : null });
-    $('amcLegend2').innerHTML = ser.map(s => `<span><svg width="22" height="12"><line x1="0" y1="6" x2="22" y2="6" stroke="${s.col}" stroke-width="2.5" ${s.dash ? 'stroke-dasharray="5 3"' : ''}/></svg>${esc(s.name)}</span>`).join('');
-    lineChart($('amcChart2'), E, ser, e => `<div class="h">${MESES[e.m - 1]} ${e.y}</div>` + ser.map(s => `<div class="r"><span><i style="background:${s.col}"></i>${esc(s.name)}</span><b class="num">${fS(s.get(e))}</b></div>`).join(''), k, false, true);
+    const serAll = rows.map((r, i) => ({ k: r.key, name: r.name, col: AMC_COL[i % AMC_COL.length], get: e => r.d[e.ym] ? r.d[e.ym].sPres : null }));
+    serAll.push({ k: 'TOT', name: `Total Americar ${lbl}`, col: 'var(--ink-2)', dash: true, get: e => T[e.ym] ? T[e.ym].sPres : null });
+    // segmentador de zonas (cada botón prende / apaga su serie; por defecto todas)
+    if (!amcZOn) amcZOn = new Set(serAll.map(s => s.k));
+    $('amcZSel').innerHTML = `<button data-g="__all">Todas</button><button data-g="__none">Ninguna</button>` + serAll.map(s => `<button data-g="${esc(s.k)}" class="${amcZOn.has(s.k) ? 'on' : ''}"><i style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;background:${s.col}"></i>${esc(s.name)}</button>`).join('');
+    const ser = serAll.filter(s => amcZOn.has(s.k));
+    $('amcLegend2').innerHTML = amcZType === 'line' ? ser.map(s => `<span><svg width="22" height="12"><line x1="0" y1="6" x2="22" y2="6" stroke="${s.col}" stroke-width="2.5" ${s.dash ? 'stroke-dasharray="5 3"' : ''}/></svg>${esc(s.name)}</span>`).join('')
+      : ser.map(s => `<span><i style="background:${s.col}"></i>${esc(s.name)}</span>`).join('');
+    const tip2 = e => `<div class="h">${MESES[e.m - 1]} ${e.y}</div>` + ser.map(s => `<div class="r"><span><i style="background:${s.col}"></i>${esc(s.name)}</span><b class="num">${fS(s.get(e))}</b></div>`).join('');
+    if (!ser.length) $('amcChart2').innerHTML = '<div class="muted" style="padding:30px;text-align:center">Elige al menos una zona</div>';
+    else if (amcZType === 'line') lineChart($('amcChart2'), E, ser, tip2, k, false, true);
+    else groupBars($('amcChart2'), E, ser, tip2, k);
     // tabla: Total + zonas, meses del año en curso con comparación al año anterior
     const MM = MESES.map(x => x.toUpperCase()), mk = (y, m) => y * 100 + m;
     const cells = f => MM.map((_, j) => { const v = f(j + 1); return `<td class="${j + 1 === nMax ? 'hi' : ''}">${v}</td>`; }).join('');
